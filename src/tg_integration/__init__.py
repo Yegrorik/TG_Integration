@@ -1,0 +1,2 @@
+"""TG integration service package."""
+
