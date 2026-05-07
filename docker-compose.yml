@@ -18,3 +18,20 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  tg_polling:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tg-polling
+    restart: unless-stopped
+    profiles:
+      - polling
+    command: ["python", "-m", "tg_integration.telegram_polling"]
+    env_file:
+      - path: ./.env
+        required: false
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - tg_integration

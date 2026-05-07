@@ -48,6 +48,30 @@ class TelegramClient:
             },
         )
 
+    async def delete_webhook(self, *, drop_pending_updates: bool = False) -> dict[str, Any]:
+        return await self.request(
+            "deleteWebhook",
+            {"drop_pending_updates": drop_pending_updates},
+        )
+
+    async def get_updates(
+        self,
+        *,
+        offset: int | None = None,
+        limit: int = 50,
+        timeout: int = 25,
+    ) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "limit": limit,
+            "timeout": timeout,
+            "allowed_updates": ["message", "edited_message"],
+        }
+        if offset is not None:
+            payload["offset"] = offset
+        response = await self.request("getUpdates", payload)
+        result = response.get("result") if isinstance(response, dict) else None
+        return result if isinstance(result, list) else []
+
     async def send_text(self, *, chat_id: str, text: str) -> dict[str, Any]:
         return await self.request("sendMessage", {"chat_id": chat_id, "text": text})
 

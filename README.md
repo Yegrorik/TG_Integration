@@ -9,6 +9,7 @@ Minimal service for amoCRM Chats API channel connection and outbound message web
 - `POST /amocrm/chats/connect` - backend helper for connecting an amoCRM account to the registered channel and receiving `scope_id`.
 - `POST /webhooks/telegram` - Telegram Bot API webhook endpoint.
 - `POST /telegram/webhook/setup` - helper that calls Telegram `setWebhook`.
+- `python -m tg_integration.telegram_polling` - Telegram `getUpdates` polling mode for setups without a public HTTPS domain.
 - Text bridge in both directions: Telegram user messages go to amoCRM, amoCRM manager messages go back to Telegram.
 - SQLite state for conversation mapping, processed webhook ids, and message ids.
 - Signed outbound requests to `amojo` with `Date`, `Content-Type`, `Content-MD5`, and `X-Signature`.
@@ -101,6 +102,26 @@ curl -X POST http://localhost:8000/telegram/webhook/setup \
   -d '{"public_base_url":"https://your-domain.com","drop_pending_updates":true}'
 ```
 
+Polling mode without a domain:
+
+```bash
+python -m tg_integration.telegram_polling --once
+```
+
+Run it continuously:
+
+```bash
+python -m tg_integration.telegram_polling
+```
+
+With Docker Compose:
+
+```bash
+docker compose --profile polling up -d --build
+```
+
+Polling calls Telegram `deleteWebhook` first because Telegram does not allow `getUpdates` while a webhook is active. Use `--drop-pending-updates` only when you want to discard queued Telegram messages.
+
 Run tests:
 
 ```bash
@@ -114,6 +135,7 @@ pytest
 - `account_id` in `/amocrm/chats/connect` - the account `amojo_id`, not the regular numeric amoCRM account ID.
 - `scope_id` - account-channel connection ID returned by the `connect` method. amoCRM substitutes it into the webhook URL.
 - `TELEGRAM_WEBHOOK_SECRET` - random secret passed to Telegram `setWebhook` as `secret_token`. Telegram sends it back in `X-Telegram-Bot-Api-Secret-Token`; the service rejects webhook requests without the exact value.
+- `getUpdates` - polling mode where this service asks Telegram for new bot messages. It does not need `PUBLIC_BASE_URL`, `TELEGRAM_WEBHOOK_SECRET`, a domain, or HTTPS, but it must be running constantly.
 
 ## Current bridge behavior
 
