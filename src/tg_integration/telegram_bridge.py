@@ -14,7 +14,9 @@ TELEGRAM_USER_PREFIX = "tg_user:"
 class TelegramInboundMessage:
     event_id: str
     event_type: str
+    telegram_route_id: str
     telegram_chat_id: str
+    telegram_thread_id: str | None
     telegram_message_id: str
     telegram_user_id: str | None
     telegram_name: str
@@ -26,10 +28,17 @@ class TelegramInboundMessage:
 class AmoOutboundMessage:
     amo_message_id: str | None
     telegram_chat_id: str | None
+    telegram_thread_id: str | None
     message_type: str
     text: str
     media_url: str | None
     file_name: str | None
+
+
+@dataclass(frozen=True)
+class TelegramRoute:
+    chat_id: str
+    message_thread_id: str | None = None
 
 
 def verify_telegram_webhook_secret(*, configured_secret: str, incoming_secret: str | None) -> bool:
@@ -38,16 +47,28 @@ def verify_telegram_webhook_secret(*, configured_secret: str, incoming_secret: s
     return hmac.compare_digest(configured_secret, incoming_secret)
 
 
-def telegram_conversation_id(chat_id: int | str) -> str:
-    return f"{TELEGRAM_CHAT_PREFIX}{chat_id}"
+def telegram_conversation_id(chat_id: int | str, message_thread_id: int | str | None = None) -> str:
+    route = f"{TELEGRAM_CHAT_PREFIX}{chat_id}"
+    if message_thread_id is not None:
+        route = f"{route}:thread:{message_thread_id}"
+    return route
+
+
+def parse_telegram_route(value: str | None) -> TelegramRoute | None:
+    if not value or not value.startswith(TELEGRAM_CHAT_PREFIX):
+        return None
+    route = value[len(TELEGRAM_CHAT_PREFIX) :]
+    thread_marker = ":thread:"
+    if thread_marker in route:
+        chat_id, thread_id = route.rsplit(thread_marker, 1)
+        if chat_id and thread_id:
+            return TelegramRoute(chat_id=chat_id, message_thread_id=thread_id)
+    return TelegramRoute(chat_id=route)
 
 
 def parse_telegram_chat_id(value: str | None) -> str | None:
-    if not value:
-        return None
-    if value.startswith(TELEGRAM_CHAT_PREFIX):
-        return value[len(TELEGRAM_CHAT_PREFIX) :]
-    return None
+    route = parse_telegram_route(value)
+    return route.chat_id if route else None
 
 
 def telegram_user_id(user_id: int | str | None) -> str | None:
@@ -138,6 +159,7 @@ def build_telegram_to_amocrm_message(
     chat = message.get("chat") or {}
     sender = message.get("from") or chat
     chat_id = chat.get("id")
+    message_thread_id = message.get("message_thread_id")
     message_id = message.get("message_id")
     if chat_id is None or message_id is None:
         return None
@@ -150,6 +172,7 @@ def build_telegram_to_amocrm_message(
     username = sender.get("username")
     user_id = telegram_user_id(sender.get("id"))
     name = telegram_full_name(sender, chat)
+    route_id = telegram_conversation_id(chat_id, message_thread_id)
 
     message_payload: dict[str, Any] = {
         "type": msg_type,
@@ -162,12 +185,12 @@ def build_telegram_to_amocrm_message(
         "timestamp": unix_timestamp,
         "msec_timestamp": unix_timestamp * 1000,
         "msgid": f"tg:{chat_id}:{message_id}",
-        "conversation_id": telegram_conversation_id(chat_id),
+        "conversation_id": route_id,
         "message": message_payload,
     }
     if not is_edit:
         payload["sender"] = {
-            "id": user_id or telegram_conversation_id(chat_id),
+            "id": user_id or route_id,
             "name": name,
         }
         payload["silent"] = False
@@ -183,7 +206,9 @@ def build_telegram_to_amocrm_message(
     return TelegramInboundMessage(
         event_id=event_id,
         event_type=event_type,
+        telegram_route_id=route_id,
         telegram_chat_id=str(chat_id),
+        telegram_thread_id=str(message_thread_id) if message_thread_id is not None else None,
         telegram_message_id=str(message_id),
         telegram_user_id=str(sender.get("id")) if sender.get("id") is not None else None,
         telegram_name=name,
@@ -197,10 +222,12 @@ def extract_amocrm_outbound_message(payload: dict[str, Any]) -> AmoOutboundMessa
     conversation = message_wrapper.get("conversation") or {}
     message = message_wrapper.get("message") or {}
     conversation_client_id = conversation.get("client_id")
+    route = parse_telegram_route(conversation_client_id)
 
     return AmoOutboundMessage(
         amo_message_id=message.get("id"),
-        telegram_chat_id=parse_telegram_chat_id(conversation_client_id),
+        telegram_chat_id=route.chat_id if route else None,
+        telegram_thread_id=route.message_thread_id if route else None,
         message_type=str(message.get("type") or "text"),
         text=str(message.get("text") or ""),
         media_url=message.get("media"),

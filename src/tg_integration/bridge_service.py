@@ -10,7 +10,6 @@ from .storage import BridgeStore
 from .telegram_bridge import (
     build_telegram_to_amocrm_message,
     extract_update_message,
-    telegram_conversation_id,
     telegram_media_file,
 )
 from .telegram_client import TelegramClient
@@ -86,12 +85,12 @@ async def process_telegram_update(
         new_message.get("conversation_id")
         if isinstance(new_message, dict)
         else None
-    ) or extract_conversation_id_from_payload(response_body) or telegram_conversation_id(inbound.telegram_chat_id)
+    ) or extract_conversation_id_from_payload(response_body) or inbound.telegram_route_id
     amo_message_id = new_message.get("msgid") if isinstance(new_message, dict) else None
     amo_ref_id = new_message.get("ref_id") if isinstance(new_message, dict) else None
 
     store.upsert_conversation_link(
-        telegram_chat_id=inbound.telegram_chat_id,
+        telegram_chat_id=inbound.telegram_route_id,
         amo_conversation_id=str(amo_conversation_id),
         telegram_user_id=inbound.telegram_user_id,
         telegram_name=inbound.telegram_name,
@@ -105,7 +104,7 @@ async def process_telegram_update(
     store.save_message_link(
         source="telegram",
         source_message_id=inbound.event_id,
-        telegram_chat_id=inbound.telegram_chat_id,
+        telegram_chat_id=inbound.telegram_route_id,
         telegram_message_id=inbound.telegram_message_id,
         amo_message_id=str(amo_message_id) if amo_message_id else None,
         amo_ref_id=str(amo_ref_id) if amo_ref_id else None,

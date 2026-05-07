@@ -2,6 +2,7 @@ from tg_integration.telegram_bridge import (
     build_telegram_to_amocrm_message,
     extract_amocrm_outbound_message,
     parse_telegram_chat_id,
+    parse_telegram_route,
     telegram_conversation_id,
     verify_telegram_webhook_secret,
 )
@@ -62,11 +63,53 @@ def test_extract_amocrm_outbound_message() -> None:
     outbound = extract_amocrm_outbound_message(payload)
 
     assert outbound.telegram_chat_id == "123456"
+    assert outbound.telegram_thread_id is None
     assert outbound.amo_message_id == "amo-message-id"
     assert outbound.text == "Hi from amo"
 
 
+def test_group_topic_message_gets_thread_specific_conversation_id() -> None:
+    update = {
+        "update_id": 43,
+        "message": {
+            "message_id": 78,
+            "message_thread_id": 55,
+            "date": 1715000000,
+            "chat": {"id": -1001234567890, "type": "supergroup", "title": "Sales"},
+            "from": {"id": 987, "first_name": "Ivan", "username": "ivan"},
+            "text": "Group hello",
+        },
+    }
+
+    inbound = build_telegram_to_amocrm_message(update)
+
+    assert inbound is not None
+    assert inbound.telegram_chat_id == "-1001234567890"
+    assert inbound.telegram_thread_id == "55"
+    assert inbound.telegram_route_id == "tg:-1001234567890:thread:55"
+    assert inbound.amo_payload["payload"]["conversation_id"] == "tg:-1001234567890:thread:55"
+
+
+def test_extract_amocrm_outbound_message_for_group_topic() -> None:
+    payload = {
+        "message": {
+            "conversation": {"id": "amo-conversation-id", "client_id": "tg:-1001234567890:thread:55"},
+            "message": {"id": "amo-message-id", "type": "text", "text": "Hi topic"},
+        }
+    }
+
+    outbound = extract_amocrm_outbound_message(payload)
+
+    assert outbound.telegram_chat_id == "-1001234567890"
+    assert outbound.telegram_thread_id == "55"
+
+
 def test_telegram_id_helpers() -> None:
     assert telegram_conversation_id(123) == "tg:123"
+    assert telegram_conversation_id(-100123, 55) == "tg:-100123:thread:55"
     assert parse_telegram_chat_id("tg:123") == "123"
+    route = parse_telegram_route("tg:-100123:thread:55")
+    assert route is not None
+    assert route.chat_id == "-100123"
+    assert route.message_thread_id == "55"
     assert parse_telegram_chat_id("other") is None

@@ -12,6 +12,7 @@ from .amocrm_chats import (
     AmoCRMConnectPayload,
     compact_message_summary,
     connect_chat_channel,
+    get_chat_history,
     update_delivery_status,
     verify_webhook_signature,
 )
@@ -22,6 +23,7 @@ from .lead_history import LeadHistoryConfigError, LeadHistoryNotFound, get_lead_
 from .storage import BridgeStore
 from .telegram_bridge import (
     extract_amocrm_outbound_message,
+    parse_telegram_route,
     verify_telegram_webhook_secret,
 )
 from .telegram_client import TelegramAPIError, TelegramClient
@@ -93,6 +95,13 @@ class LeadChatHistoryResponse(BaseModel):
     conversation_id: str
     link_source: str
     crm_events_used: bool
+    history: object
+
+
+class ChatHistoryResponse(BaseModel):
+    conversation_id: str
+    offset: int
+    limit: int
     history: object
 
 
@@ -171,7 +180,7 @@ async def setup_telegram_webhook(
     request: SetupTelegramWebhookRequest,
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
-    _, telegram_secret = require_telegram_credentials(settings)
+    token, telegram_secret = require_telegram_credentials(settings)
     public_base_url = (request.public_base_url or settings.public_base_url or "").rstrip("/")
     if not public_base_url:
         raise HTTPException(
@@ -187,6 +196,33 @@ async def setup_telegram_webhook(
         drop_pending_updates=request.drop_pending_updates,
     )
     return {"ok": True, "webhook_url": webhook_url, "body": body}
+
+
+@app.get("/amocrm/chats/{conversation_id}/history", response_model=ChatHistoryResponse)
+async def amocrm_chat_history(
+    conversation_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=50),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    scope_id = require_chat_scope_id(settings)
+    secret = require_chat_secret(settings)
+    result = await get_chat_history(
+        base_url=settings.amocrm_chat_base_url,
+        scope_id=scope_id,
+        conversation_id=conversation_id,
+        secret=secret,
+        offset=offset,
+        limit=limit,
+    )
+    if not result["ok"]:
+        raise HTTPException(status_code=int(result["status_code"]), detail=result["body"])
+    return {
+        "conversation_id": conversation_id,
+        "offset": offset,
+        "limit": limit,
+        "history": result["body"],
+    }
 
 
 @app.post("/amocrm/leads/{lead_id}/conversation-link", response_model=ConversationLinkResponse)
@@ -325,9 +361,12 @@ async def amocrm_chats_webhook(
         return {"status": "accepted", "scope_id": scope_id}
 
     telegram_chat_id = outbound.telegram_chat_id
+    telegram_thread_id = outbound.telegram_thread_id
     if not telegram_chat_id and summary.get("conversation_id"):
         link = store.get_link_by_amo_conversation_id(str(summary["conversation_id"]))
-        telegram_chat_id = link.telegram_chat_id if link else None
+        route = parse_telegram_route(link.telegram_chat_id) if link else None
+        telegram_chat_id = route.chat_id if route else None
+        telegram_thread_id = route.message_thread_id if route else None
     if not telegram_chat_id:
         logger.warning(
             "Cannot forward amoCRM message to Telegram because chat mapping is missing",
@@ -344,9 +383,14 @@ async def amocrm_chats_webhook(
                 media_url=outbound.media_url,
                 caption=outbound.text or None,
                 file_name=outbound.file_name,
+                message_thread_id=telegram_thread_id,
             )
         elif outbound.text:
-            telegram_response = await telegram.send_text(chat_id=telegram_chat_id, text=outbound.text)
+            telegram_response = await telegram.send_text(
+                chat_id=telegram_chat_id,
+                text=outbound.text,
+                message_thread_id=telegram_thread_id,
+            )
         else:
             logger.info("amoCRM message had no text or media, nothing to forward")
             return {"status": "accepted", "scope_id": scope_id}
@@ -369,7 +413,7 @@ async def amocrm_chats_webhook(
     store.save_message_link(
         source="amocrm",
         source_message_id=event_id,
-        telegram_chat_id=telegram_chat_id,
+        telegram_chat_id=str(summary.get("conversation_client_id") or telegram_chat_id),
         telegram_message_id=str(telegram_message_id) if telegram_message_id else None,
         amo_message_id=outbound.amo_message_id,
     )

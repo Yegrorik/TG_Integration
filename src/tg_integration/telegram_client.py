@@ -72,8 +72,17 @@ class TelegramClient:
         result = response.get("result") if isinstance(response, dict) else None
         return result if isinstance(result, list) else []
 
-    async def send_text(self, *, chat_id: str, text: str) -> dict[str, Any]:
-        return await self.request("sendMessage", {"chat_id": chat_id, "text": text})
+    async def send_text(
+        self,
+        *,
+        chat_id: str,
+        text: str,
+        message_thread_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+        if message_thread_id is not None:
+            payload["message_thread_id"] = message_thread_id
+        return await self.request("sendMessage", payload)
 
     async def get_file_url(self, *, file_id: str) -> str:
         response = await self.request("getFile", {"file_id": file_id})
@@ -91,6 +100,7 @@ class TelegramClient:
         media_url: str,
         caption: str | None = None,
         file_name: str | None = None,
+        message_thread_id: str | None = None,
     ) -> dict[str, Any]:
         method, media_field = {
             "picture": ("sendPhoto", "photo"),
@@ -99,6 +109,8 @@ class TelegramClient:
             "audio": ("sendAudio", "audio"),
         }.get(message_type, ("sendDocument", "document"))
         payload: dict[str, Any] = {"chat_id": chat_id, media_field: media_url}
+        if message_thread_id is not None:
+            payload["message_thread_id"] = message_thread_id
         if caption:
             payload["caption"] = caption
         if file_name:

@@ -11,6 +11,7 @@ Minimal service for amoCRM Chats API channel connection and outbound message web
 - `POST /telegram/webhook/setup` - helper that calls Telegram `setWebhook`.
 - `python -m tg_integration.telegram_polling` - Telegram `getUpdates` polling mode for setups without a public HTTPS domain.
 - `GET /amocrm/leads/{lead_id}/chat-history` - fetch amoCRM chat history for a lead when the lead is linked to a chat conversation.
+- `GET /amocrm/chats/{conversation_id}/history` - fetch amoCRM chat history directly by `conversation_id`.
 - `POST /amocrm/leads/{lead_id}/conversation-link` - manually link a lead to an amoCRM chat `conversation_id`.
 - Text bridge in both directions: Telegram user messages go to amoCRM, amoCRM manager messages go back to Telegram.
 - SQLite state for conversation mapping, processed webhook ids, and message ids.
@@ -142,6 +143,24 @@ Get chat history by lead id:
 curl "http://127.0.0.1:8001/amocrm/leads/123456/chat-history?limit=50"
 ```
 
+Get chat history directly by conversation id:
+
+```bash
+curl "http://127.0.0.1:8001/amocrm/chats/tg:777777777/history?offset=0&limit=50"
+```
+
+Or from inside the app environment:
+
+```bash
+python -m tg_integration.chat_history "tg:777777777" --offset 0 --limit 50
+```
+
+With Docker:
+
+```bash
+docker compose exec tg_integration python -m tg_integration.chat_history "tg:777777777" --offset 0 --limit 50
+```
+
 If the service cannot infer the chat from local messages, link it manually:
 
 ```bash
@@ -164,8 +183,11 @@ When amoCRM webhook payloads or send-message responses include explicit lead con
 ## Current bridge behavior
 
 - Telegram conversation id in amoCRM is `tg:<telegram_chat_id>`.
+- Telegram group conversation id also uses the group `chat.id`, for example `tg:-1001234567890`.
+- Telegram forum topic conversation id includes the topic thread: `tg:<chat_id>:thread:<message_thread_id>`.
 - Telegram sender id in amoCRM is `tg_user:<telegram_user_id>`.
 - amoCRM -> Telegram routing uses `message.conversation.client_id`; if it is `tg:<chat_id>`, the message is sent to that Telegram chat.
+- For group chats, add the bot to the group. If BotFather privacy mode is enabled, Telegram may send only commands, replies, and mentions to the bot; disable privacy mode if the bot must see every group message.
 - Telegram text and captions are forwarded as text.
 - amoCRM `picture`, `video`, `voice`, `audio`, and `file` messages are sent to Telegram using the media URL from amoCRM.
 - Telegram media is not exposed to amoCRM by default because Telegram file URLs include the bot token. Set `TELEGRAM_EXPOSE_FILE_URLS=true` only if you explicitly accept that tradeoff.
