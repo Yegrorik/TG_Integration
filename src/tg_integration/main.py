@@ -34,6 +34,16 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="TG Integration", version="0.1.0")
 
 
+@app.middleware("http")
+async def normalize_repeated_slashes(request: Request, call_next):
+    path = request.scope.get("path", "")
+    if "//" in path:
+        normalized_path = "/" + "/".join(part for part in path.split("/") if part)
+        request.scope["path"] = normalized_path
+        request.scope["raw_path"] = normalized_path.encode("ascii")
+    return await call_next(request)
+
+
 class ConnectChannelRequest(BaseModel):
     account_id: str = Field(
         ...,
