@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from typing import Any
+from urllib.parse import quote
 
 
 AMOCRM_HOOK_VERSION = "v2"
@@ -140,6 +141,28 @@ async def update_delivery_status(
     )
 
 
+async def get_chat_history(
+    *,
+    base_url: str,
+    scope_id: str,
+    conversation_id: str,
+    secret: str,
+    offset: int = 0,
+    limit: int = 50,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    safe_conversation_id = quote(conversation_id, safe="")
+    return await signed_request(
+        base_url=base_url,
+        path=f"/v2/origin/custom/{scope_id}/chats/{safe_conversation_id}/history",
+        method="GET",
+        secret=secret,
+        body=b"",
+        params={"offset": offset, "limit": min(limit, 50)},
+        timeout=timeout,
+    )
+
+
 async def signed_json_request(
     *,
     base_url: str,
@@ -149,9 +172,29 @@ async def signed_json_request(
     payload: dict[str, Any],
     timeout: float = 10.0,
 ) -> dict[str, Any]:
+    body = encode_json_body(payload)
+    return await signed_request(
+        base_url=base_url,
+        path=path,
+        method=method,
+        secret=secret,
+        body=body,
+        timeout=timeout,
+    )
+
+
+async def signed_request(
+    *,
+    base_url: str,
+    path: str,
+    method: str,
+    secret: str,
+    body: bytes,
+    params: dict[str, int | str] | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
     import httpx
 
-    body = encode_json_body(payload)
     date_header = current_rfc2822_date()
     content_md5, signature = build_request_signature(
         method=method,
@@ -169,7 +212,7 @@ async def signed_json_request(
     }
 
     async with httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=timeout) as client:
-        response = await client.request(method, path, content=body, headers=headers)
+        response = await client.request(method, path, content=body, params=params, headers=headers)
 
     response_text = response.text
     response_json: Any

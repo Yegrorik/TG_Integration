@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .amocrm_chats import send_chat_event
+from .amocrm_crm import extract_conversation_id_from_payload, extract_lead_id_from_payload
 from .config import Settings
 from .storage import BridgeStore
 from .telegram_bridge import (
@@ -79,12 +80,13 @@ async def process_telegram_update(
         raise BridgeUpstreamError("amocrm", result["body"])
 
     response_body = result.get("body") if isinstance(result.get("body"), dict) else {}
+    response_lead_id = extract_lead_id_from_payload(response_body)
     new_message = response_body.get("new_message") if isinstance(response_body, dict) else {}
     amo_conversation_id = (
         new_message.get("conversation_id")
         if isinstance(new_message, dict)
         else None
-    ) or telegram_conversation_id(inbound.telegram_chat_id)
+    ) or extract_conversation_id_from_payload(response_body) or telegram_conversation_id(inbound.telegram_chat_id)
     amo_message_id = new_message.get("msgid") if isinstance(new_message, dict) else None
     amo_ref_id = new_message.get("ref_id") if isinstance(new_message, dict) else None
 
@@ -95,6 +97,11 @@ async def process_telegram_update(
         telegram_name=inbound.telegram_name,
         telegram_username=inbound.telegram_username,
     )
+    if response_lead_id:
+        store.link_lead_to_conversation(
+            lead_id=response_lead_id,
+            amo_conversation_id=str(amo_conversation_id),
+        )
     store.save_message_link(
         source="telegram",
         source_message_id=inbound.event_id,

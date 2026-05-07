@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     amocrm_chat_scope_id: str | None = Field(default=None)
     amocrm_chat_base_url: str = Field(default="https://amojo.amocrm.ru")
     amocrm_chat_default_title: str = Field(default="TG Integration")
+    amocrm_account_base_url: str | None = Field(default=None)
+    amocrm_access_token: str | None = Field(default=None)
     telegram_bot_token: str | None = Field(default=None)
     telegram_webhook_secret: str | None = Field(default=None)
     telegram_api_base_url: str = Field(default="https://api.telegram.org")

@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from .amocrm_chats import (
@@ -15,8 +15,10 @@ from .amocrm_chats import (
     update_delivery_status,
     verify_webhook_signature,
 )
+from .amocrm_crm import extract_conversation_id_from_payload, extract_lead_id_from_payload
 from .bridge_service import BridgeConfigError, BridgeUpstreamError, process_telegram_update
 from .config import Settings, get_settings
+from .lead_history import LeadHistoryConfigError, LeadHistoryNotFound, get_lead_chat_history
 from .storage import BridgeStore
 from .telegram_bridge import (
     extract_amocrm_outbound_message,
@@ -74,6 +76,24 @@ class SetupTelegramWebhookResponse(BaseModel):
     ok: bool
     webhook_url: str
     body: object
+
+
+class ConversationLinkRequest(BaseModel):
+    conversation_id: str
+
+
+class ConversationLinkResponse(BaseModel):
+    lead_id: str
+    conversation_id: str
+    status: Literal["linked"]
+
+
+class LeadChatHistoryResponse(BaseModel):
+    lead_id: str
+    conversation_id: str
+    link_source: str
+    crm_events_used: bool
+    history: object
 
 
 def require_chat_credentials(settings: Settings) -> tuple[str, str]:
@@ -169,6 +189,62 @@ async def setup_telegram_webhook(
     return {"ok": True, "webhook_url": webhook_url, "body": body}
 
 
+@app.post("/amocrm/leads/{lead_id}/conversation-link", response_model=ConversationLinkResponse)
+async def link_lead_to_conversation(
+    lead_id: int,
+    request: ConversationLinkRequest,
+    store: BridgeStore = Depends(get_bridge_store),
+) -> dict[str, str]:
+    store.link_lead_to_conversation(
+        lead_id=str(lead_id),
+        amo_conversation_id=request.conversation_id,
+    )
+    return {
+        "lead_id": str(lead_id),
+        "conversation_id": request.conversation_id,
+        "status": "linked",
+    }
+
+
+@app.get("/amocrm/leads/{lead_id}/chat-history", response_model=LeadChatHistoryResponse)
+async def lead_chat_history(
+    lead_id: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=50),
+    settings: Settings = Depends(get_settings),
+    store: BridgeStore = Depends(get_bridge_store),
+) -> dict[str, object]:
+    try:
+        result = await get_lead_chat_history(
+            lead_id=lead_id,
+            settings=settings,
+            store=store,
+            offset=offset,
+            limit=limit,
+        )
+    except LeadHistoryConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except LeadHistoryNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "message": str(exc),
+                "message_ids_from_crm_events": exc.message_ids,
+                "hint": "Link the lead to an amoCRM chat conversation first, or configure AMOCRM_ACCOUNT_BASE_URL and AMOCRM_ACCESS_TOKEN so the service can infer it from events.",
+            },
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return {
+        "lead_id": result.lead_id,
+        "conversation_id": result.conversation_id,
+        "link_source": result.link_source,
+        "crm_events_used": result.crm_events_used,
+        "history": result.history,
+    }
+
+
 @app.post("/webhooks/telegram", response_model=TelegramWebhookAcceptedResponse)
 async def telegram_webhook(
     request: Request,
@@ -224,6 +300,19 @@ async def amocrm_chats_webhook(
 
     summary = compact_message_summary(scope_id=scope_id, payload=payload)
     logger.info("Accepted amoCRM chat webhook", extra={"amocrm_chat": summary})
+
+    payload_lead_id = extract_lead_id_from_payload(payload)
+    payload_conversation_id = extract_conversation_id_from_payload(payload)
+    if payload_lead_id and payload_conversation_id:
+        store.link_lead_to_conversation(
+            lead_id=payload_lead_id,
+            amo_conversation_id=payload_conversation_id,
+        )
+        logger.info(
+            "Linked amoCRM lead %s to chat conversation %s",
+            payload_lead_id,
+            payload_conversation_id,
+        )
 
     configured_scope_id = settings.amocrm_chat_scope_id
     if configured_scope_id and configured_scope_id != scope_id:

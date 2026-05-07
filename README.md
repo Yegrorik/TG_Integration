@@ -10,8 +10,11 @@ Minimal service for amoCRM Chats API channel connection and outbound message web
 - `POST /webhooks/telegram` - Telegram Bot API webhook endpoint.
 - `POST /telegram/webhook/setup` - helper that calls Telegram `setWebhook`.
 - `python -m tg_integration.telegram_polling` - Telegram `getUpdates` polling mode for setups without a public HTTPS domain.
+- `GET /amocrm/leads/{lead_id}/chat-history` - fetch amoCRM chat history for a lead when the lead is linked to a chat conversation.
+- `POST /amocrm/leads/{lead_id}/conversation-link` - manually link a lead to an amoCRM chat `conversation_id`.
 - Text bridge in both directions: Telegram user messages go to amoCRM, amoCRM manager messages go back to Telegram.
 - SQLite state for conversation mapping, processed webhook ids, and message ids.
+- SQLite also stores `lead_id -> conversation_id` links. The service fills this automatically when amoCRM payloads/responses contain explicit lead context, and also supports manual linking.
 - Signed outbound requests to `amojo` with `Date`, `Content-Type`, `Content-MD5`, and `X-Signature`.
 
 ## Setup
@@ -29,6 +32,8 @@ Minimal service for amoCRM Chats API channel connection and outbound message web
    AMOCRM_CHAT_CHANNEL_SECRET=...
    AMOCRM_CHAT_SCOPE_ID=...
    AMOCRM_CHAT_BASE_URL=https://amojo.amocrm.ru
+   AMOCRM_ACCOUNT_BASE_URL=https://example.amocrm.ru
+   AMOCRM_ACCESS_TOKEN=...
    TELEGRAM_BOT_TOKEN=...
    TELEGRAM_WEBHOOK_SECRET=generate-a-random-32-char-string
    PUBLIC_BASE_URL=https://your-domain.com
@@ -130,6 +135,23 @@ Run tests:
 pip install -r requirements-dev.txt
 pytest
 ```
+
+Get chat history by lead id:
+
+```bash
+curl "http://127.0.0.1:8001/amocrm/leads/123456/chat-history?limit=50"
+```
+
+If the service cannot infer the chat from local messages, link it manually:
+
+```bash
+curl -X POST http://127.0.0.1:8001/amocrm/leads/123456/conversation-link \
+  -H "Content-Type: application/json" \
+  -d '{"conversation_id":"tg:777777777"}'
+```
+
+Then call `chat-history` again. If `AMOCRM_ACCOUNT_BASE_URL` and `AMOCRM_ACCESS_TOKEN` are configured, the service also tries to inspect lead chat events and infer the conversation from message ids already stored locally.
+When amoCRM webhook payloads or send-message responses include explicit lead context, such as `entity_type=lead` with `entity_id`, `_embedded.leads[].id`, `lead_id`, or a template param like `{{lead.id}}`, the service stores the lead/chat link automatically.
 
 ## Terms
 
