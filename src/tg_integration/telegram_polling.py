@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from pathlib import Path
 
 from .bridge_service import process_telegram_update
-from .config import get_settings
+from .config import Settings, load_settings
 from .storage import BridgeStore
 from .telegram_client import TelegramClient
 
@@ -13,22 +14,64 @@ from .telegram_client import TelegramClient
 logger = logging.getLogger(__name__)
 
 
-async def run_polling(*, drop_pending_updates: bool, once: bool, timeout: int) -> None:
-    settings = get_settings()
+def env_mtime(env_path: str) -> float | None:
+    path = Path(env_path)
+    if not path.exists():
+        return None
+    return path.stat().st_mtime
+
+
+async def configure_telegram_client(
+    *,
+    settings: Settings,
+    timeout: int,
+    drop_pending_updates: bool,
+) -> TelegramClient:
     if not settings.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN must be configured")
-
-    store = BridgeStore(settings.bridge_db_path)
     telegram = TelegramClient(
         token=settings.telegram_bot_token,
         base_url=settings.telegram_api_base_url,
         timeout=timeout + 10,
     )
     await telegram.delete_webhook(drop_pending_updates=drop_pending_updates)
-    logger.info("Telegram webhook disabled; polling started")
+    token_preview = f"{settings.telegram_bot_token[:8]}...{settings.telegram_bot_token[-4:]}"
+    logger.info("Telegram webhook disabled; polling token %s", token_preview)
+    return telegram
+
+
+async def run_polling(*, drop_pending_updates: bool, once: bool, timeout: int) -> None:
+    env_path = ".env"
+    settings = load_settings()
+    store = BridgeStore(settings.bridge_db_path)
+    telegram = await configure_telegram_client(
+        settings=settings,
+        timeout=timeout,
+        drop_pending_updates=drop_pending_updates,
+    )
+    last_env_mtime = env_mtime(env_path)
+    logger.info("Telegram polling started")
 
     offset: int | None = None
     while True:
+        current_env_mtime = env_mtime(env_path)
+        if current_env_mtime != last_env_mtime:
+            old_token = settings.telegram_bot_token
+            settings = load_settings()
+            if settings.bridge_db_path != str(store.db_path):
+                store = BridgeStore(settings.bridge_db_path)
+            if settings.telegram_bot_token != old_token:
+                telegram = await configure_telegram_client(
+                    settings=settings,
+                    timeout=timeout,
+                    drop_pending_updates=False,
+                )
+                offset = None
+                logger.info("Telegram bot token changed; polling client reloaded")
+            else:
+                logger.info("Polling settings reloaded")
+            last_env_mtime = current_env_mtime
+
         updates = await telegram.get_updates(offset=offset, timeout=timeout)
         if not updates and once:
             return

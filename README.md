@@ -120,6 +120,8 @@ With Docker Compose:
 docker compose --profile polling up -d --build
 ```
 
+When `.env` is mounted into the container, polling reloads settings after `.env` changes. If `TELEGRAM_BOT_TOKEN` changes, it switches to the new token and resets polling offset automatically. The web API container still needs a restart for env changes.
+
 Polling calls Telegram `deleteWebhook` first because Telegram does not allow `getUpdates` while a webhook is active. Use `--drop-pending-updates` only when you want to discard queued Telegram messages.
 
 Run tests:
