@@ -88,6 +88,11 @@ def test_group_topic_message_gets_thread_specific_conversation_id() -> None:
     assert inbound.telegram_thread_id == "55"
     assert inbound.telegram_route_id == "tg:-1001234567890:thread:55"
     assert inbound.amo_payload["payload"]["conversation_id"] == "tg:-1001234567890:thread:55"
+    assert inbound.amo_payload["payload"]["sender"] == {
+        "id": "tg:-1001234567890:thread:55",
+        "name": "Sales",
+    }
+    assert inbound.amo_payload["payload"]["message"]["text"] == "Ivan (@ivan): Group hello"
 
 
 def test_extract_amocrm_outbound_message_for_group_topic() -> None:

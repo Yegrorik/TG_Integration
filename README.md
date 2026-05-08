@@ -186,6 +186,7 @@ When amoCRM webhook payloads or send-message responses include explicit lead con
 - Telegram group conversation id also uses the group `chat.id`, for example `tg:-1001234567890`.
 - Telegram forum topic conversation id includes the topic thread: `tg:<chat_id>:thread:<message_thread_id>`.
 - Telegram sender id in amoCRM is `tg_user:<telegram_user_id>`.
+- For Telegram groups, amoCRM sender id is the stable group/topic id, not the individual author id. The real author is prefixed into message text, e.g. `Ivan (@ivan): message`. This keeps different group members inside one amoCRM conversation instead of creating a new conversation/lead per member.
 - amoCRM -> Telegram routing uses `message.conversation.client_id`; if it is `tg:<chat_id>`, the message is sent to that Telegram chat.
 - For group chats, add the bot to the group. If BotFather privacy mode is enabled, Telegram may send only commands, replies, and mentions to the bot; disable privacy mode if the bot must see every group message.
 - Telegram text and captions are forwarded as text.

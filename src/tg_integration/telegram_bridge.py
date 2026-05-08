@@ -99,6 +99,22 @@ def telegram_profile_link(username: str | None) -> str | None:
     return f"https://t.me/{username}"
 
 
+def is_group_chat(chat: dict[str, Any]) -> bool:
+    return chat.get("type") in {"group", "supergroup"}
+
+
+def telegram_author_label(user: dict[str, Any] | None) -> str:
+    name = telegram_full_name(user)
+    username = user.get("username") if isinstance(user, dict) else None
+    if username and not name.startswith("@"):
+        return f"{name} (@{username})"
+    return name
+
+
+def prefix_group_author(text: str, sender: dict[str, Any]) -> str:
+    return f"{telegram_author_label(sender)}: {text}"
+
+
 def extract_update_message(update: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
     if isinstance(update.get("message"), dict):
         return update["message"], False
@@ -171,8 +187,12 @@ def build_telegram_to_amocrm_message(
     msg_type = media_kind or ("file" if media_url else "text")
     username = sender.get("username")
     user_id = telegram_user_id(sender.get("id"))
-    name = telegram_full_name(sender, chat)
     route_id = telegram_conversation_id(chat_id, message_thread_id)
+    group_chat = is_group_chat(chat)
+    amo_sender_id = route_id if group_chat else (user_id or route_id)
+    amo_sender_name = telegram_full_name(chat) if group_chat else telegram_full_name(sender, chat)
+    if group_chat:
+        text = prefix_group_author(text, sender)
 
     message_payload: dict[str, Any] = {
         "type": msg_type,
@@ -190,11 +210,11 @@ def build_telegram_to_amocrm_message(
     }
     if not is_edit:
         payload["sender"] = {
-            "id": user_id or route_id,
-            "name": name,
+            "id": amo_sender_id,
+            "name": amo_sender_name,
         }
         payload["silent"] = False
-        profile_link = telegram_profile_link(username)
+        profile_link = telegram_profile_link(chat.get("username") if group_chat else username)
         if profile_link:
             payload["sender"]["profile_link"] = profile_link
 
@@ -211,7 +231,7 @@ def build_telegram_to_amocrm_message(
         telegram_thread_id=str(message_thread_id) if message_thread_id is not None else None,
         telegram_message_id=str(message_id),
         telegram_user_id=str(sender.get("id")) if sender.get("id") is not None else None,
-        telegram_name=name,
+        telegram_name=amo_sender_name,
         telegram_username=str(username) if username else None,
         amo_payload=amo_payload,
     )
